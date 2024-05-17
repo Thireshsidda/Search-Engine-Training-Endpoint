@@ -1,0 +1,97 @@
+name: workflow
+
+on: [workflow_dispatch]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  integration:
+    name: Continuous Integration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Lint code
+        run: echo "Linting repository"
+
+      - name: Run unit tests
+        run: echo "Running unit tests"
+
+
+  Continuous-Deployment:
+    name: Continuous Deployment
+    needs: integration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16
+
+      - name: Check Node Version
+        run: npm -v
+
+      - name: Install Paperspace Cli
+        run: npm install -g paperspace-node
+
+      - name: Test Paperspace Cli
+        run: paperspace -version
+
+      - name: Start a Gpu Instance
+        run: paperspace machines start --apiKey ${{ secrets.API_KEY }} --machineId ${{ secrets.MACHINE_ID }}
+
+      - name: Wait For Instance state to be ready
+        run: paperspace machines waitfor --apiKey ${{ secrets.API_KEY }} --machineId ${{ secrets.MACHINE_ID }} --state "ready"
+
+  Continuous-Training:
+    name: Continuous Training
+    needs: Continuous-Deployment
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
+          aws-region: us-east-1
+
+      - name: Run Training Pipeline
+        env:
+          DATABASE_USERNAME: ${{ secrets.DATABASE_USERNAME }}
+          DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
+          ACCESS_KEY_ID: ${{ secrets.ACCESS_KEY_ID }}
+          AWS_SECRET_KEY: ${{ secrets.AWS_SECRET_KEY }}
+        run: |
+          pip3 install -r requirements.txt
+          python3 src/pipeline/pipeline.py 
+
+      - name: Training Completed
+        run: echo "Training Completed"
+
+  Clean-Workbench:
+    name: Clean Workbench
+    needs: Continuous-Training
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16
+
+      - name: Install Paperspace Cli
+        run: npm install -g paperspace-node
+
+      - name: Stop Running Instance
+        run: paperspace machines stop --apiKey ${{ secrets.API_KEY }} --machineId ${{ secrets.MACHINE_ID }}
+
+      - name: Wait For Instance state to be Stopped
+        run: paperspace machines waitfor --apiKey ${{ secrets.API_KEY }} --machineId ${{ secrets.MACHINE_ID }} --state "off"
+
+      - name: Job Completed
+        run: echo "Completed Training Stage"
